@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Whiteboard with Shapes & Eraser</title>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #f0f2f5;
+        }
+        
+        .container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        .header {
+            background: #6200ee;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+        
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        
+        .controls {
+            background: white;
+            padding: 10px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #ddd;
+            flex-wrap: wrap;
+        }
+        
+        .tool-btn {
+            background: #f1f1f1;
+            color: #333;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .tool-btn.active {
+            background: #6200ee;
+            color: white;
+        }
+        
+        .tool-btn:hover {
+            background: #ddd;
+        }
+        
+        .tool-btn.active:hover {
+            background: #3700b3;
+        }
+        
+        input[type="color"] {
+            width: 40px;
+            height: 40px;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+        }
+        
+        input[type="range"] {
+            width: 100px;
+        }
+        
+        .whiteboard-container {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        canvas {
+            background: white;
+            cursor: crosshair;
+        }
+        
+        .users-online {
+            background: #03dac6;
+            color: black;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+        }
+        
+        .tool-separator {
+            width: 1px;
+            background: #ddd;
+            margin: 0 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎨 Real-Time Whiteboard (Shapes + Eraser)</h1>
+            <div class="users-online">👥 <span id="usersCount">0</span> users online</div>
+        </div>
+        
+        <div class="controls">
+            <!-- Drawing Tools -->
+            <button id="pencilBtn" class="tool-btn active">✏️ Pencil</button>
+            <button id="eraserBtn" class="tool-btn">🧽 Eraser</button>
+            
+            <div class="tool-separator"></div>
+            
+            <!-- Shapes -->
+            <button id="lineBtn" class="tool-btn">➖ Line</button>
+            <button id="rectBtn" class="tool-btn">⬛ Rectangle</button>
+            <button id="circleBtn" class="tool-btn">🔵 Circle</button>
+            
+            <div class="tool-separator"></div>
+            
+            <!-- Color & Size -->
+            <input type="color" id="colorPicker" value="#000000">
+            <input type="range" id="brushSize" min="1" max="50" value="5">
+            
+            <div class="tool-separator"></div>
+            
+            <!-- Actions -->
+            <button id="clearBtn" class="tool-btn">🗑️ Clear Board</button>
+        </div>
+        
+        <div class="whiteboard-container">
+            <canvas id="whiteboard"></canvas>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+
+    <script>
+        // Firebase Configuration (Replace with your own config)
+        const firebaseConfig = {
+            apiKey: "AIzaSyDEXAMPLEEXAMPLEEXAMPLE",
+            authDomain: "your-project.firebaseapp.com",
+            databaseURL: "https://your-project.firebaseio.com",
+            projectId: "your-project",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "1234567890",
+            appId: "1:1234567890:web:abc123def456"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // Canvas Setup
+        const canvas = document.getElementById('whiteboard');
+        const ctx = canvas.getContext('2d');
+        
+        // Make canvas full-screen
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 120; // Account for header & controls
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Drawing State
+        let isDrawing = false;
+        let currentTool = 'pencil';
+        let currentColor = '#000000';
+        let currentSize = 5;
+        let usersOnline = 0;
+        let startX, startY; // For shapes
+        let snapshot; // For temporary drawing
+
+        // DOM Elements
+        const colorPicker = document.getElementById('colorPicker');
+        const brushSize = document.getElementById('brushSize');
+        const clearBtn = document.getElementById('clearBtn');
+        const usersCount = document.getElementById('usersCount');
+        
+        // Tool Buttons
+        const pencilBtn = document.getElementById('pencilBtn');
+        const eraserBtn = document.getElementById('eraserBtn');
+        const lineBtn = document.getElementById('lineBtn');
+        const rectBtn = document.getElementById('rectBtn');
+        const circleBtn = document.getElementById('circleBtn');
+
+        // Event Listeners for Tools
+        pencilBtn.addEventListener('click', () => setTool('pencil'));
+        eraserBtn.addEventListener('click', () => setTool('eraser'));
+        lineBtn.addEventListener('click', () => setTool('line'));
+        rectBtn.addEventListener('click', () => setTool('rect'));
+        circleBtn.addEventListener('click', () => setTool('circle'));
+
+        colorPicker.addEventListener('input', (e) => {
+            currentColor = e.target.value;
+        });
+
+        brushSize.addEventListener('input', (e) => {
+            currentSize = e.target.value;
+        });
+
+        clearBtn.addEventListener('click', () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            database.ref('drawings').remove(); // Clear all drawings in Firebase
+        });
+
+        // Set active tool
+        function setTool(tool) {
+            currentTool = tool;
+            
+            // Update active button
+            [pencilBtn, eraserBtn, lineBtn, rectBtn, circleBtn].forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            document.getElementById(tool + 'Btn').classList.add('active');
+            
+            // Change cursor
+            if (tool === 'eraser') {
+                canvas.style.cursor = 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'16\' height=\'16\' viewBox=\'0 0 16 16\'><rect width=\'16\' height=\'16\' fill=\'white\'/><rect x=\'2\' y=\'2\' width=\'12\' height=\'12\' fill=\'black\'/></svg>") 8 8, auto';
+            } else {
+                canvas.style.cursor = 'crosshair';
+            }
+        }
+
+        // Drawing Functions
+        function startDrawing(e) {
+            isDrawing = true;
+            
+            // For shapes, save initial position and take canvas snapshot
+            if (['line', 'rect', 'circle'].includes(currentTool)) {
+                startX = e.clientX;
+                startY = e.clientY - 120; // Adjust for header
+                snapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            } else {
+                draw(e);
+            }
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            
+            // For freehand tools, just reset path
+            if (['pencil', 'eraser'].includes(currentTool)) {
+                ctx.beginPath();
+            }
+            // For shapes, commit the final drawing to Firebase
+            else if (['line', 'rect', 'circle'].includes(currentTool)) {
+                const shapeData = {
+                    type: currentTool,
+                    startX: startX,
+                    startY: startY,
+                    endX: lastX,
+                    endY: lastY,
+                    color: currentTool === 'eraser' ? '#FFFFFF' : currentColor,
+                    size: currentSize
+                };
+                database.ref('drawings').push(shapeData);
+            }
+        }
+
+        let lastX, lastY; // Track last position for shapes
+
+        function draw(e) {
+            if (!isDrawing) return;
+            
+            const x = e.clientX;
+            const y = e.clientY - 120; // Adjust for header
+            
+            // For shapes, draw temporarily
+            if (['line', 'rect', 'circle'].includes(currentTool)) {
+                ctx.putImageData(snapshot, 0, 0); // Restore original
+                
+                ctx.lineWidth = currentSize;
+                ctx.strokeStyle = currentColor;
+                ctx.fillStyle = currentColor;
+                
+                lastX = x;
+                lastY = y;
+                
+                switch(currentTool) {
+                    case 'line':
+                        ctx.beginPath();
+                        ctx.moveTo(startX, startY);
+                        ctx.lineTo(x, y);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'rect':
+                        ctx.beginPath();
+                        ctx.rect(startX, startY, x - startX, y - startY);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'circle':
+                        ctx.beginPath();
+                        const radius = Math.sqrt(Math.pow(x - startX, 2) + Math.pow(y - startY, 2));
+                        ctx.arc(startX, startY, radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+                }
+            } 
+            // For pencil/eraser
+            else {
+                ctx.lineWidth = currentSize;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = currentTool === 'eraser' ? '#FFFFFF' : currentColor;
+                
+                ctx.lineTo(x, y);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                
+                // Send drawing data to Firebase
+                const drawingData = {
+                    x: x,
+                    y: y,
+                    color: currentTool === 'eraser' ? '#FFFFFF' : currentColor,
+                    size: currentSize,
+                    type: 'draw'
+                };
+                database.ref('drawings').push(drawingData);
+            }
+        }
+
+        // Mouse/Touch Events
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        // Touch support for mobile
+        canvas.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousedown', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            startDrawing(mouseEvent);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            const touch = e.touches[0];
+            const mouseEvent = new MouseEvent('mousemove', {
+                clientX: touch.clientX,
+                clientY: touch.clientY
+            });
+            draw(mouseEvent);
+        });
+
+        canvas.addEventListener('touchend', stopDrawing);
+
+        // Firebase Real-Time Sync
+        database.ref('drawings').on('child_added', (snapshot) => {
+            const data = snapshot.val();
+            
+            if (data.type === 'draw') {
+                // Freehand drawing
+                ctx.lineWidth = data.size;
+                ctx.lineCap = 'round';
+                ctx.strokeStyle = data.color;
+                
+                ctx.lineTo(data.x, data.y);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(data.x, data.y);
+            } else {
+                // Shapes
+                ctx.lineWidth = data.size;
+                ctx.strokeStyle = data.color;
+                ctx.fillStyle = data.color;
+                
+                switch(data.type) {
+                    case 'line':
+                        ctx.beginPath();
+                        ctx.moveTo(data.startX, data.startY);
+                        ctx.lineTo(data.endX, data.endY);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'rect':
+                        ctx.beginPath();
+                        ctx.rect(data.startX, data.startY, data.endX - data.startX, data.endY - data.startY);
+                        ctx.stroke();
+                        break;
+                        
+                    case 'circle':
+                        ctx.beginPath();
+                        const radius = Math.sqrt(Math.pow(data.endX - data.startX, 2) + Math.pow(data.endY - data.startY, 2));
+                        ctx.arc(data.startX, data.startY, radius, 0, Math.PI * 2);
+                        ctx.stroke();
+                        break;
+                }
+            }
+        });
+
+        // Track online users
+        const userRef = database.ref('users');
+        const user = {
+            id: Date.now().toString(),
+            lastActive: firebase.database.ServerValue.TIMESTAMP
+        };
+
+        userRef.child(user.id).set(user);
+        userRef.child(user.id).onDisconnect().remove();
+
+        userRef.on('value', (snapshot) => {
+            usersOnline = snapshot.numChildren();
+            usersCount.textContent = usersOnline;
+        });
+    </script>
+</body>
+</html>
